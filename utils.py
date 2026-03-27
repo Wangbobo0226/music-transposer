@@ -1,21 +1,46 @@
-def get_transpose_info(instrument_name):
-    # 設定各樂器的移調半音數
-    transpose_table = {
-        "豎笛 (Bb)": 2,
-        "小號 (Bb)": 2,
-        "中音薩克斯風 (Eb)": 9,
-        "長笛 (C)": 0
-    }
-    return transpose_table.get(instrument_name, 0)
+# utils.py
 
-def transpose_numbered_note(note_str, shift):
-    # 簡化的 1-7 移調邏輯
-    try:
-        if note_str.isdigit():
-            val = int(note_str)
-            # 確保在 1-7 之間循環 (這裡僅為基礎邏輯範例)
-            new_val = (val + shift - 1) % 7 + 1
-            return str(new_val)
-    except:
-        pass
-    return note_str
+def get_mapping():
+    """建立並回傳簡譜轉換的字典映射"""
+    # 根據您的需求定義基礎轉換規則
+    base_mapping = {
+        '1': '4',
+        '2': '5',
+        '3': '6',
+        '4': '7',
+        '5': '1',
+        '6': '2',
+        '7': '3'
+    }
+    
+    # 自動生成高音的轉換規則 (例如: "1'" -> "4'")
+    high_mapping = {k + "'": v + "'" for k, v in base_mapping.items()}
+    
+    # 將基礎音與高音規則合併
+    complete_mapping = {**base_mapping, **high_mapping}
+    return complete_mapping
+
+def convert_sheet_music(input_text):
+    """將傳入的簡譜字串進行轉換"""
+    if not input_text:
+        return ""
+        
+    mapping = get_mapping()
+    converted_text = ""
+    
+    i = 0
+    while i < len(input_text):
+        # 先檢查是否有兩個字元的組合 (例如 1', 2')
+        if i + 1 < len(input_text) and input_text[i:i+2] in mapping:
+            converted_text += mapping[input_text[i:i+2]]
+            i += 2
+        # 再檢查單一數字
+        elif input_text[i] in mapping:
+            converted_text += mapping[input_text[i]]
+            i += 1
+        else:
+            # 如果不是數字 (例如空格、小節線 | 等)，則保留原樣
+            converted_text += input_text[i]
+            i += 1
+            
+    return converted_text
