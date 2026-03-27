@@ -11,6 +11,7 @@ st.set_page_config(page_title="簡譜移調轉換器 (AI 升級版)", page_icon=
 # --- 初始化 EasyOCR 模型 ---
 @st.cache_resource
 def load_ocr_model():
+    # 載入模型，關閉 GPU 節省資源
     return easyocr.Reader(['ch_tra', 'en'], gpu=False)
 
 def reconstruct_layout(ocr_results):
@@ -33,7 +34,7 @@ def reconstruct_layout(ocr_results):
     blocks.sort(key=lambda b: b['center_y'])
     lines = []
     current_line = []
-    y_threshold = 20 # 稍微調大一點容差，適應放大後的圖片
+    y_threshold = 15 # 恢復正常的容差值
     
     for block in blocks:
         if not current_line:
@@ -72,7 +73,7 @@ def format_jianpu_text(text):
         chars = [c for c in line if c.strip()]
         if chars:
             music_char_count = sum(1 for c in chars if c.isdigit() or c in '-·|')
-            if music_char_count / len(chars) > 0.4: # 稍微調低判定標準，讓更多行被視為樂譜
+            if music_char_count / len(chars) > 0.4: 
                 if not line.startswith('|'):
                     line = '| ' + line
                 if not line.endswith('|'):
@@ -90,7 +91,7 @@ menu_option = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.info("💡 **升級提示**：目前已開啟「影像強化模式」，AI 會自動放大並增強圖片對比，捕捉微小的音符數字！")
+st.sidebar.info("💡 **升級提示**：已開啟「記憶體安全模式」，兼顧影像強化與雲端系統穩定性！")
 
 if menu_option == "📝 文字輸入轉換":
     st.title("📝 簡譜文字轉換")
@@ -132,24 +133,14 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
                         st.error(f"❌ 模型載入失敗：{str(e)}")
                         st.stop()
                 
-                with st.spinner('🔍 正在進行影像強化與掃描...'):
+                with st.spinner('🔍 正在進行安全掃描與排版美化...'):
                     try:
-                        # 【關鍵修改 1】：影像強化預處理
+                        # 【修改點】：移除耗費記憶體的手動 OpenCV 放大，只保留灰階處理
                         img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                        gray_img = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
                         
-                        # 1. 將圖片放大 2 倍 (讓微小的數字變大)
-                        width = int(img_cv.shape[1] * 2)
-                        height = int(img_cv.shape[0] * 2)
-                        dim = (width, height)
-                        resized_img = cv2.resize(img_cv, dim, interpolation=cv2.INTER_CUBIC)
-                        
-                        # 2. 轉成灰階圖片 (去除顏色的干擾)
-                        gray_img = cv2.cvtColor(resized_img, cv2.COLOR_BGR2GRAY)
-                        
-                        # 【關鍵修改 2】：強制提高 EasyOCR 的靈敏度
-                        # mag_ratio=2.5: 內部再次放大
-                        # contrast_ths=0.1, adjust_contrast=0.5: 強制處理低對比度的文字
-                        result = ocr.readtext(gray_img, mag_ratio=2.5, contrast_ths=0.1, adjust_contrast=0.5)
+                        # 【修改點】：稍微調降放大倍率到 2.0，避免記憶體爆掉，同時維持辨識率
+                        result = ocr.readtext(gray_img, mag_ratio=2.0, contrast_ths=0.1, adjust_contrast=0.5)
                         
                         structured_text = reconstruct_layout(result)
                         beautified_text = format_jianpu_text(structured_text)
@@ -163,7 +154,7 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
                             st.write("**(2) 自動移調後的結果：**")
                             st.code(final_converted, language="text")
                         else:
-                            st.error("⚠️ AI 仍然無法從圖片中解析出清晰的音符。建議您：\n1. 裁切圖片，只保留樂譜部分\n2. 確保圖片光線充足且不模糊")
+                            st.error("⚠️ AI 仍然無法從圖片中解析出清晰的音符。")
                             
                     except Exception as e:
                         st.error(f"❌ 處理圖片時發生錯誤：{str(e)}")
