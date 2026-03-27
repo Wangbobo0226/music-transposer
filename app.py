@@ -11,6 +11,7 @@ st.set_page_config(page_title="簡譜移調轉換器 (AI 升級版)", page_icon=
 # --- 初始化 EasyOCR 模型 ---
 @st.cache_resource
 def load_ocr_model():
+    # 載入模型，關閉 GPU 節省資源，適合雲端環境
     return easyocr.Reader(['ch_tra', 'en'], gpu=False)
 
 def reconstruct_layout(ocr_results):
@@ -33,7 +34,7 @@ def reconstruct_layout(ocr_results):
     blocks.sort(key=lambda b: b['center_y'])
     lines = []
     current_line = []
-    y_threshold = 15 
+    y_threshold = 15 # 容差值
     
     for block in blocks:
         if not current_line:
@@ -57,7 +58,7 @@ def reconstruct_layout(ocr_results):
     return final_text
 
 def format_jianpu_text(text):
-    """將文字強制格式化為標準簡譜樣式，並過濾 AI 視覺雜訊"""
+    """將文字強制格式化為絕對標準的簡譜樣式： | 3 5 2 5 | 4 4 3 5 | """
     lines = text.split('\n')
     formatted_lines = []
     
@@ -65,27 +66,39 @@ def format_jianpu_text(text):
         if not line.strip():
             continue
             
-        # 1. 修正誤判的小節線
-        line = re.sub(r'(?<=\s)[Il](?=\s)', '|', line)
-        line = line.replace('|', ' | ')
-        line = re.sub(r'\s{3,}', '  ', line).strip()
+        # 1. 將常被誤認的字母轉為小節線 |
+        line = re.sub(r'[Il]', '|', line)
         
-        # 2. 【全新：除雜訊濾網】合併連續的小節線 (例如 | | 變成 |)
+        # 2. 先在所有小節線兩側強制加空格
+        line = line.replace('|', ' | ')
+        
+        # 3. 將所有「多個連續空白」全部壓縮成「剛好一個空白」
+        line = re.sub(r'\s+', ' ', line).strip()
+        
+        # 4. 濾網：合併多餘的小節線 (例如 "| |" 變成 "|")
         line = re.sub(r'\|\s*\|', '|', line)
         
-        # 3. 【全新：除雜訊濾網】刪除夾在小節線中間的無意義孤立數字或符號 (例如 | 6 |)
+        # 5. 濾網：刪除夾在小節線中無意義的孤單雜訊 (例如 "| 6 |" 變成 "|")
         line = re.sub(r'\|\s*[\d\.\-]\s*\|', '|', line)
         
-        # 4. 智慧補齊頭尾小節線
+        # 6. 智慧補齊頭尾小節線
         chars = [c for c in line if c.strip()]
         if chars:
             music_char_count = sum(1 for c in chars if c.isdigit() or c in '-·|')
-            if music_char_count / len(chars) > 0.4: 
+            if music_char_count / len(chars) > 0.3: 
                 if not line.startswith('|'):
                     line = '| ' + line
                 if not line.endswith('|'):
                     line = line + ' |'
-                    
+        
+        # 7. 最後終極美化：再次確保 | 兩側絕對是一個空格，而且頭尾乾淨
+        line = line.replace('|', ' | ')
+        line = re.sub(r'\s+', ' ', line).strip()
+        
+        # 如果經過過濾後，這行只剩下小節線而沒有音符，就直接刪掉這一行
+        if line.replace('|', '').strip() == '':
+            continue
+            
         formatted_lines.append(line)
         
     return '\n'.join(formatted_lines)
@@ -98,7 +111,7 @@ menu_option = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.info("💡 **升級提示**：已開啟「純黑白無放大模式」與「雜訊過濾器」，保證記憶體安全，排版更乾淨！")
+st.sidebar.info("💡 **升級提示**：已開啟「純黑白安全模式」與「完美間距排版整形器」，格式更嚴格整齊！")
 
 if menu_option == "📝 文字輸入轉換":
     st.title("📝 簡譜文字轉換")
@@ -129,7 +142,7 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
         
         col1, col2 = st.columns(2)
         with col1:
-            # 順便把即將被淘汰的語法修正為 width="stretch"
+            # 使用最新語法 width="stretch" 避免黃色警告
             st.image(image, caption="已上傳的樂譜", width="stretch")
             
         with col2:
@@ -141,26 +154,27 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
                         st.error(f"❌ 模型載入失敗：{str(e)}")
                         st.stop()
                 
-                with st.spinner('🔍 正在進行極速黑白強化與排版解析 (安全模式)...'):
+                with st.spinner('🔍 正在進行極速黑白強化與強制排版美化...'):
                     try:
                         img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
                         
-                        # 【關鍵修改】：完全拿掉 cv2.resize 放大，只做轉灰階
+                        # 記憶體安全模式：不放大，僅轉灰階
                         gray_img = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
                         
-                        # Otsu 二值化：自動尋找最佳閥值，把背景變純白、字體變純黑！
+                        # Otsu 二值化：把背景變純白、字體變純黑，大幅降低雜訊干擾
                         _, binary_img = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                         
-                        # 進行辨識 (內部放大率也降回預設的 1.0 或 1.5 確保安全)
+                        # 進行辨識 (內部放大率設為安全的 1.2)
                         result = ocr.readtext(binary_img, mag_ratio=1.2, contrast_ths=0.1, adjust_contrast=0.5)
                         
+                        # 核心處理流程：重構座標 -> 強制整形排版 -> 移調處理
                         structured_text = reconstruct_layout(result)
                         beautified_text = format_jianpu_text(structured_text)
                         cleaned_original, final_converted = process_jianpu_ocr(beautified_text)
                         
                         if cleaned_original.strip():
                             st.success("✅ 辨識與轉換完成！")
-                            st.write("**(1) 根據座標重構並格式化的乾淨原譜：**")
+                            st.write("**(1) 根據座標重構並強制格式化的乾淨原譜：**")
                             st.code(cleaned_original, language="text")
                             
                             st.write("**(2) 自動移調後的結果：**")
