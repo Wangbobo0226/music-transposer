@@ -26,7 +26,7 @@ def preprocess_image(img_cv):
 
     return median
 
-st.set_page_config(page_title="簡譜移調轉換器", page_icon="🎵", layout="wide") # 改用 wide layout 讓排版有更多空間
+st.set_page_config(page_title="簡譜移調轉換器", page_icon="🎵", layout="wide")
 
 st.sidebar.title("⚙️ 功能選單")
 menu_option = st.sidebar.radio(
@@ -86,5 +86,27 @@ elif menu_option == "🖼️ 圖片上傳轉換":
             if st.button("🔍 開始掃描與轉換", type="primary"):
                 with st.spinner('正在分析樂譜排版中...'):
                     try:
-                        # 將 psm 參數帶入，並加入 preserve_interword_spaces 嘗試保留空白
-                        custom_config = f'--oem 3 --psm {psm_val} -c
+                        # 這裡已經修復了引號斷行的問題
+                        custom_config = f'--oem 3 --psm {psm_val} -c preserve_interword_spaces=1'
+                        
+                        img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                        processed = preprocess_image(img_cv)
+                        
+                        detected_text = pytesseract.image_to_string(processed, config=custom_config)
+                        
+                        # 呼叫 utils 進行清理與轉換
+                        cleaned_original, final_converted = process_jianpu_ocr(detected_text)
+                        
+                        if cleaned_original.strip():
+                            st.success("✅ 辨識完成！")
+                            st.write("**OCR 擷取出的原譜 (盡量保留排版)：**")
+                            # 使用 st.text 顯示，有時比 st.code 更能保留連續空白
+                            st.text(cleaned_original)
+                            
+                            st.write("**自動移調後的結果：**")
+                            st.text(final_converted)
+                        else:
+                            st.error("⚠️ 無法從圖片中偵測到清晰的數字。")
+                            
+                    except Exception as e:
+                        st.error(f"❌ 處理圖片時發生錯誤：{str(e)}")
