@@ -2,7 +2,7 @@
 
 def get_mapping():
     """建立並回傳簡譜轉換的字典映射"""
-    # 根據您的需求定義基礎轉換規則
+    # 基礎轉換規則
     base_mapping = {
         '1': '4',
         '2': '5',
@@ -17,8 +17,7 @@ def get_mapping():
     high_mapping = {k + "'": v + "'" for k, v in base_mapping.items()}
     
     # 將基礎音與高音規則合併
-    complete_mapping = {**base_mapping, **high_mapping}
-    return complete_mapping
+    return {**base_mapping, **high_mapping}
 
 def convert_sheet_music(input_text):
     """將傳入的簡譜字串進行轉換"""
