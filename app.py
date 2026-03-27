@@ -8,34 +8,33 @@ import re
 
 st.set_page_config(page_title="簡譜移調轉換器 (AI 升級版)", page_icon="🎵", layout="wide")
 
+# --- 網頁記憶體 (Session State) 初始化 ---
+# 用來記住 AI 掃描出來的初步結果，才不會在點擊按鈕後消失
+if 'ocr_scanned_text' not in st.session_state:
+    st.session_state.ocr_scanned_text = None
+
 # --- 初始化 EasyOCR 模型 ---
 @st.cache_resource
 def load_ocr_model():
-    # 載入模型，關閉 GPU 節省資源，適合雲端環境
     return easyocr.Reader(['ch_tra', 'en'], gpu=False)
 
 def reconstruct_layout(ocr_results):
-    """根據 EasyOCR 的座標結果重構初步排版"""
     if not ocr_results:
         return ""
-        
     blocks = []
     for res in ocr_results:
         bbox = res[0]
         text = res[1]
-        
         min_y = min([p[1] for p in bbox])
         max_y = max([p[1] for p in bbox])
         center_y = (min_y + max_y) / 2
         min_x = min([p[0] for p in bbox])
-        
         blocks.append({'text': text, 'center_y': center_y, 'min_x': min_x})
         
     blocks.sort(key=lambda b: b['center_y'])
     lines = []
     current_line = []
-    y_threshold = 15 # 容差值
-    
+    y_threshold = 15 
     for block in blocks:
         if not current_line:
             current_line.append(block)
@@ -54,34 +53,21 @@ def reconstruct_layout(ocr_results):
         line.sort(key=lambda b: b['min_x'])
         line_text = "  ".join([b['text'] for b in line])
         final_text += line_text + "\n"
-        
     return final_text
 
 def format_jianpu_text(text):
-    """將文字強制格式化為絕對標準的簡譜樣式： | 3 5 2 5 | 4 4 3 5 | """
+    """將文字強制格式化為絕對標準的簡譜樣式"""
     lines = text.split('\n')
     formatted_lines = []
-    
     for line in lines:
         if not line.strip():
             continue
-            
-        # 1. 將常被誤認的字母轉為小節線 |
         line = re.sub(r'[Il]', '|', line)
-        
-        # 2. 先在所有小節線兩側強制加空格
         line = line.replace('|', ' | ')
-        
-        # 3. 將所有「多個連續空白」全部壓縮成「剛好一個空白」
         line = re.sub(r'\s+', ' ', line).strip()
-        
-        # 4. 濾網：合併多餘的小節線 (例如 "| |" 變成 "|")
         line = re.sub(r'\|\s*\|', '|', line)
-        
-        # 5. 濾網：刪除夾在小節線中無意義的孤單雜訊 (例如 "| 6 |" 變成 "|")
         line = re.sub(r'\|\s*[\d\.\-]\s*\|', '|', line)
         
-        # 6. 智慧補齊頭尾小節線
         chars = [c for c in line if c.strip()]
         if chars:
             music_char_count = sum(1 for c in chars if c.isdigit() or c in '-·|')
@@ -91,16 +77,11 @@ def format_jianpu_text(text):
                 if not line.endswith('|'):
                     line = line + ' |'
         
-        # 7. 最後終極美化：再次確保 | 兩側絕對是一個空格，而且頭尾乾淨
         line = line.replace('|', ' | ')
         line = re.sub(r'\s+', ' ', line).strip()
-        
-        # 如果經過過濾後，這行只剩下小節線而沒有音符，就直接刪掉這一行
         if line.replace('|', '').strip() == '':
             continue
-            
         formatted_lines.append(line)
-        
     return '\n'.join(formatted_lines)
 
 # --- 側邊欄選單 ---
@@ -111,18 +92,12 @@ menu_option = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.info("💡 **升級提示**：已開啟「純黑白安全模式」與「完美間距排版整形器」，格式更嚴格整齊！")
+st.sidebar.info("💡 **升級提示**：已加入「人工校對中繼站」，AI 掃描後可手動修正錯字，再進行移調！")
 
 if menu_option == "📝 文字輸入轉換":
     st.title("📝 簡譜文字轉換")
     st.write("請在下方輸入框貼上或手打您的簡譜，系統將自動為您移調。")
-    
-    sheet_text = st.text_area(
-        "輸入簡譜：", 
-        placeholder="例如：\n| 3 5 2 5 | 4 4 3 5 | 1' 2' 3' |",
-        height=300
-    )
-
+    sheet_text = st.text_area("輸入簡譜：", placeholder="例如：\n| 3 5 2 5 | 4 4 3 5 |", height=300)
     if st.button("開始轉換", type="primary"):
         if sheet_text.strip():
             converted = convert_sheet_music(sheet_text)
@@ -133,20 +108,23 @@ if menu_option == "📝 文字輸入轉換":
 
 elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
     st.title("🖼️ 樂譜圖片 AI 智慧偵測")
-    st.write("上傳樂譜圖片，AI 將自動辨識數字、過濾雜訊，並重構排版進行移調！")
+    st.write("上傳樂譜圖片，AI 掃描後您可以先進行人工校對，確認無誤後再進行移調！")
 
     uploaded_file = st.file_uploader("請選擇樂譜圖片", type=["png", "jpg", "jpeg"])
+
+    # 如果上傳了新圖片，先清空之前的記憶體
+    if uploaded_file is None:
+        st.session_state.ocr_scanned_text = None
 
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
         
         col1, col2 = st.columns(2)
         with col1:
-            # 使用最新語法 width="stretch" 避免黃色警告
             st.image(image, caption="已上傳的樂譜", width="stretch")
             
         with col2:
-            if st.button("🚀 開始啟動 AI 掃描", type="primary"):
+            if st.button("🚀 開始啟動 AI 掃描"):
                 with st.spinner('📦 正在喚醒 AI 視覺模型...'):
                     try:
                         ocr = load_ocr_model()
@@ -154,33 +132,42 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
                         st.error(f"❌ 模型載入失敗：{str(e)}")
                         st.stop()
                 
-                with st.spinner('🔍 正在進行極速黑白強化與強制排版美化...'):
+                with st.spinner('🔍 正在進行掃描與排版...'):
                     try:
                         img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-                        
-                        # 記憶體安全模式：不放大，僅轉灰階
                         gray_img = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-                        
-                        # Otsu 二值化：把背景變純白、字體變純黑，大幅降低雜訊干擾
                         _, binary_img = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                         
-                        # 進行辨識 (內部放大率設為安全的 1.2)
                         result = ocr.readtext(binary_img, mag_ratio=1.2, contrast_ths=0.1, adjust_contrast=0.5)
                         
-                        # 核心處理流程：重構座標 -> 強制整形排版 -> 移調處理
                         structured_text = reconstruct_layout(result)
                         beautified_text = format_jianpu_text(structured_text)
-                        cleaned_original, final_converted = process_jianpu_ocr(beautified_text)
                         
-                        if cleaned_original.strip():
-                            st.success("✅ 辨識與轉換完成！")
-                            st.write("**(1) 根據座標重構並強制格式化的乾淨原譜：**")
-                            st.code(cleaned_original, language="text")
-                            
-                            st.write("**(2) 自動移調後的結果：**")
-                            st.code(final_converted, language="text")
+                        # 【關鍵修改】不直接移調，而是把結果存進記憶體
+                        if beautified_text.strip():
+                            st.session_state.ocr_scanned_text = beautified_text
                         else:
-                            st.error("⚠️ AI 無法從圖片中解析出清晰的音符，建議裁切圖片只保留樂譜部分。")
+                            st.error("⚠️ AI 無法從圖片中解析出清晰的音符。")
                             
                     except Exception as e:
                         st.error(f"❌ 處理圖片時發生錯誤：{str(e)}")
+            
+            # --- 人工校對與移調區塊 ---
+            # 只有當記憶體裡面有掃描結果時，才顯示這個區塊
+            if st.session_state.ocr_scanned_text is not None:
+                st.success("✅ 掃描完成！請在下方檢查並修改 AI 可能看錯的數字。")
+                
+                # 顯示一個讓使用者可以編輯的輸入框
+                edited_text = st.text_area(
+                    "✏️ 人工校對區 (可自由修改內容)：", 
+                    value=st.session_state.ocr_scanned_text, 
+                    height=200
+                )
+                
+                # 確認無誤後，再點擊這個按鈕進行最終移調
+                if st.button("✨ 確認無誤，開始移調", type="primary"):
+                    cleaned_original, final_converted = process_jianpu_ocr(edited_text)
+                    
+                    st.divider()
+                    st.write("🎉 **自動移調後的結果：**")
+                    st.code(final_converted, language="text")
