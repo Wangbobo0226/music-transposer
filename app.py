@@ -68,7 +68,7 @@ if uploaded_file is not None:
         # 用於顯示預覽 (NumPy 格式)
         st.image(np.array(pil_orig), caption="原始照片預覽", use_column_width=True)
 
-        if st.button("🚀 生成淨化移調新譜"):
+        if st.button("🚀 生成數位淨化新譜"):
             with st.spinner('正在分析並淨化譜面，請稍候...'):
                 
                 # --- A. 影像淨化與去背 (生成黑白線稿) ---
@@ -86,7 +86,7 @@ if uploaded_file is not None:
                 )
                 
                 # 4. 將淨化後的黑白線稿轉回 PIL 格式
-                # 這就是我們的「新譜畫布」
+                # 這就是我們的「新數位畫布」
                 pil_clean = Image.fromarray(clean_mask).convert('RGB')
                 
                 # --- B. AI 音符提取與更新 ---
@@ -105,7 +105,7 @@ if uploaded_file is not None:
                         safe_draw_text_and_rect(draw_new, bbox, new_text)
                         count += 1
                 
-                # --- C. 顯示新生成的淨化新譜 ---
+                # --- C. 顯示新生成的數位淨化新譜 ---
                 st.subheader(f"✅ 生成 {target_instr} 專用乾淨新譜！")
                 st.image(np.array(pil_clean), caption="生成的新譜預覽", use_column_width=True)
                 
