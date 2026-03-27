@@ -6,19 +6,20 @@ import easyocr
 from utils import convert_sheet_music, process_jianpu_ocr
 import re
 
-st.set_page_config(page_title="簡譜移調轉換器 (AI 升級版)", page_icon="🎵", layout="wide")
+st.set_page_config(page_title="簡譜移調轉換器 (AI 最終強化版)", page_icon="🎵", layout="wide")
 
 # --- 網頁記憶體 (Session State) 初始化 ---
-# 用來記住 AI 掃描出來的初步結果，才不會在點擊按鈕後消失
 if 'ocr_scanned_text' not in st.session_state:
     st.session_state.ocr_scanned_text = None
 
 # --- 初始化 EasyOCR 模型 ---
 @st.cache_resource
 def load_ocr_model():
+    # 載入模型，關閉 GPU 節省資源，適合雲端環境
     return easyocr.Reader(['ch_tra', 'en'], gpu=False)
 
 def reconstruct_layout(ocr_results):
+    """根據 EasyOCR 的座標結果重構初步排版"""
     if not ocr_results:
         return ""
     blocks = []
@@ -56,29 +57,42 @@ def reconstruct_layout(ocr_results):
     return final_text
 
 def format_jianpu_text(text):
-    """將文字強制格式化為絕對標準的簡譜樣式"""
+    """將文字強制格式化為絕對標準的簡譜樣式： | 3 5 2 5 | 4 4 3 5 | """
     lines = text.split('\n')
     formatted_lines = []
     for line in lines:
         if not line.strip():
             continue
+            
+        # 1. 將常被誤認的字母轉為小節線 |
         line = re.sub(r'[Il]', '|', line)
+        
+        # 2. 先在所有小節線兩側強制加空格
         line = line.replace('|', ' | ')
+        
+        # 3. 將所有「多個連續空白」全部壓縮成「剛好一個空白」
         line = re.sub(r'\s+', ' ', line).strip()
+        
+        # 4. 濾網：合併多餘的小節線
         line = re.sub(r'\|\s*\|', '|', line)
+        
+        # 5. 濾網：刪除夾在小節線中無意義的孤單雜訊
         line = re.sub(r'\|\s*[\d\.\-]\s*\|', '|', line)
         
+        # 6. 智慧補齊頭尾小節線
         chars = [c for c in line if c.strip()]
         if chars:
-            music_char_count = sum(1 for c in chars if c.isdigit() or c in '-·|')
+            music_char_count = sum(1 for c in chars if c.isdigit() or c in "-·|")
             if music_char_count / len(chars) > 0.3: 
                 if not line.startswith('|'):
                     line = '| ' + line
                 if not line.endswith('|'):
                     line = line + ' |'
         
+        # 7. 再次確保格式對齊
         line = line.replace('|', ' | ')
         line = re.sub(r'\s+', ' ', line).strip()
+        
         if line.replace('|', '').strip() == '':
             continue
         formatted_lines.append(line)
@@ -92,27 +106,26 @@ menu_option = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.info("💡 **升級提示**：已加入「人工校對中繼站」，AI 掃描後可手動修正錯字，再進行移調！")
+st.sidebar.info("🎯 **最新更新**：已啟動「數字偵測白名單」，AI 將自動過濾非樂譜文字，大幅提升精準度！")
 
 if menu_option == "📝 文字輸入轉換":
     st.title("📝 簡譜文字轉換")
-    st.write("請在下方輸入框貼上或手打您的簡譜，系統將自動為您移調。")
-    sheet_text = st.text_area("輸入簡譜：", placeholder="例如：\n| 3 5 2 5 | 4 4 3 5 |", height=300)
+    st.write("請直接輸入或貼上簡譜文字。")
+    sheet_text = st.text_area("輸入簡譜：", placeholder="例如：| 3 5 2 5 | 4 4 3 5 |", height=300)
     if st.button("開始轉換", type="primary"):
         if sheet_text.strip():
             converted = convert_sheet_music(sheet_text)
             st.success("✅ 轉換成功！")
             st.code(converted, language="text") 
         else:
-            st.warning("請先輸入簡譜文字喔！")
+            st.warning("請先輸入簡譜文字。")
 
 elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
     st.title("🖼️ 樂譜圖片 AI 智慧偵測")
-    st.write("上傳樂譜圖片，AI 掃描後您可以先進行人工校對，確認無誤後再進行移調！")
+    st.write("上傳樂譜圖片，AI 將專注辨識數字與符號。")
 
     uploaded_file = st.file_uploader("請選擇樂譜圖片", type=["png", "jpg", "jpeg"])
 
-    # 如果上傳了新圖片，先清空之前的記憶體
     if uploaded_file is None:
         st.session_state.ocr_scanned_text = None
 
@@ -125,49 +138,48 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
             
         with col2:
             if st.button("🚀 開始啟動 AI 掃描"):
-                with st.spinner('📦 正在喚醒 AI 視覺模型...'):
+                with st.spinner('📦 正在啟動數字專用辨識模型...'):
                     try:
                         ocr = load_ocr_model()
                     except Exception as e:
                         st.error(f"❌ 模型載入失敗：{str(e)}")
                         st.stop()
                 
-                with st.spinner('🔍 正在進行掃描與排版...'):
+                with st.spinner('🔍 偵測數字中...'):
                     try:
                         img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
                         gray_img = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
                         _, binary_img = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                         
-                        result = ocr.readtext(binary_img, mag_ratio=1.2, contrast_ths=0.1, adjust_contrast=0.5)
+                        # 【核心改進】使用 allowlist 只偵測數字、小節線與基本符號
+                        result = ocr.readtext(binary_img, 
+                                            allowlist='0123456789|.-Il\'·', 
+                                            mag_ratio=1.2, 
+                                            contrast_ths=0.1, 
+                                            adjust_contrast=0.5)
                         
                         structured_text = reconstruct_layout(result)
                         beautified_text = format_jianpu_text(structured_text)
                         
-                        # 【關鍵修改】不直接移調，而是把結果存進記憶體
                         if beautified_text.strip():
                             st.session_state.ocr_scanned_text = beautified_text
                         else:
-                            st.error("⚠️ AI 無法從圖片中解析出清晰的音符。")
+                            st.error("⚠️ 無法從圖中解析出數字。")
                             
                     except Exception as e:
-                        st.error(f"❌ 處理圖片時發生錯誤：{str(e)}")
+                        st.error(f"❌ 發生錯誤：{str(e)}")
             
-            # --- 人工校對與移調區塊 ---
-            # 只有當記憶體裡面有掃描結果時，才顯示這個區塊
+            # --- 人工校對與最終移調 ---
             if st.session_state.ocr_scanned_text is not None:
-                st.success("✅ 掃描完成！請在下方檢查並修改 AI 可能看錯的數字。")
-                
-                # 顯示一個讓使用者可以編輯的輸入框
+                st.success("✅ 掃描完成！")
                 edited_text = st.text_area(
-                    "✏️ 人工校對區 (可自由修改內容)：", 
+                    "✏️ 人工校對 (若 AI 看錯數字可在此修正)：", 
                     value=st.session_state.ocr_scanned_text, 
                     height=200
                 )
                 
-                # 確認無誤後，再點擊這個按鈕進行最終移調
                 if st.button("✨ 確認無誤，開始移調", type="primary"):
                     cleaned_original, final_converted = process_jianpu_ocr(edited_text)
-                    
                     st.divider()
-                    st.write("🎉 **自動移調後的結果：**")
+                    st.write("🎉 **移調結果：**")
                     st.code(final_converted, language="text")
