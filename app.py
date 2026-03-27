@@ -11,7 +11,7 @@ st.set_page_config(page_title="簡譜移調轉換器 (AI 升級版)", page_icon=
 # --- 初始化 EasyOCR 模型 ---
 @st.cache_resource
 def load_ocr_model():
-    # 載入模型，關閉 GPU 節省資源
+    # 載入模型，關閉 GPU 節省資源，適合雲端環境
     return easyocr.Reader(['ch_tra', 'en'], gpu=False)
 
 def reconstruct_layout(ocr_results):
@@ -34,7 +34,7 @@ def reconstruct_layout(ocr_results):
     blocks.sort(key=lambda b: b['center_y'])
     lines = []
     current_line = []
-    y_threshold = 15 # 恢復正常的容差值
+    y_threshold = 15 # 容差值
     
     for block in blocks:
         if not current_line:
@@ -58,7 +58,7 @@ def reconstruct_layout(ocr_results):
     return final_text
 
 def format_jianpu_text(text):
-    """將文字強制格式化為標準簡譜樣式"""
+    """將文字強制格式化為標準簡譜樣式 (自動補齊小節線與間距)"""
     lines = text.split('\n')
     formatted_lines = []
     
@@ -66,10 +66,14 @@ def format_jianpu_text(text):
         if not line.strip():
             continue
             
+        # 修正誤判的小節線
         line = re.sub(r'(?<=\s)[Il](?=\s)', '|', line)
+        # 確保小節線前後有空格
         line = line.replace('|', ' | ')
+        # 清理多餘的連續空格
         line = re.sub(r'\s{3,}', '  ', line).strip()
         
+        # 智慧補齊頭尾小節線
         chars = [c for c in line if c.strip()]
         if chars:
             music_char_count = sum(1 for c in chars if c.isdigit() or c in '-·|')
@@ -91,7 +95,7 @@ menu_option = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.info("💡 **升級提示**：已開啟「記憶體安全模式」，兼顧影像強化與雲端系統穩定性！")
+st.sidebar.info("💡 **升級提示**：已開啟「二值化黑白強化模式」，AI 能更精準地捕捉微小的音符與小節線！")
 
 if menu_option == "📝 文字輸入轉換":
     st.title("📝 簡譜文字轉換")
@@ -133,17 +137,29 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
                         st.error(f"❌ 模型載入失敗：{str(e)}")
                         st.stop()
                 
-                with st.spinner('🔍 正在進行安全掃描與排版美化...'):
+                with st.spinner('🔍 正在進行影像黑白強化與排版解析...'):
                     try:
-                        # 【修改點】：移除耗費記憶體的手動 OpenCV 放大，只保留灰階處理
+                        # 將 PIL 影像轉為 OpenCV 格式
                         img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-                        gray_img = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
                         
-                        # 【修改點】：稍微調降放大倍率到 2.0，避免記憶體爆掉，同時維持辨識率
-                        result = ocr.readtext(gray_img, mag_ratio=2.0, contrast_ths=0.1, adjust_contrast=0.5)
+                        # 1. 溫和放大 (1.5倍)：既能放大數字，又能把記憶體消耗控制在安全範圍內
+                        width, height = int(img_cv.shape[1] * 1.5), int(img_cv.shape[0] * 1.5)
+                        resized_img = cv2.resize(img_cv, (width, height), interpolation=cv2.INTER_CUBIC)
                         
+                        # 2. 轉灰階
+                        gray_img = cv2.cvtColor(resized_img, cv2.COLOR_BGR2GRAY)
+                        
+                        # 3. Otsu 二值化：自動尋找最佳閥值，把背景變純白、字體變純黑！
+                        _, binary_img = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        
+                        # 4. 進行辨識 (內部放大率設為 1.5，強制處理低對比字體)
+                        result = ocr.readtext(binary_img, mag_ratio=1.5, contrast_ths=0.1, adjust_contrast=0.5)
+                        
+                        # 重構排版與格式化
                         structured_text = reconstruct_layout(result)
                         beautified_text = format_jianpu_text(structured_text)
+                        
+                        # 進行過濾雜訊與移調
                         cleaned_original, final_converted = process_jianpu_ocr(beautified_text)
                         
                         if cleaned_original.strip():
@@ -154,7 +170,7 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
                             st.write("**(2) 自動移調後的結果：**")
                             st.code(final_converted, language="text")
                         else:
-                            st.error("⚠️ AI 仍然無法從圖片中解析出清晰的音符。")
+                            st.error("⚠️ AI 仍然無法從圖片中解析出清晰的音符。建議裁切圖片只保留樂譜部分測試。")
                             
                     except Exception as e:
                         st.error(f"❌ 處理圖片時發生錯誤：{str(e)}")
