@@ -15,17 +15,16 @@ def transpose_for_clarinet(note_str):
     except: pass
     return note_str
 
-# --- 2. 針對範本 Bb36e564c1fa1f3c3db.jpg 的最終極精密參數 ---
-# 根據最新回饋，Y 軸再往下修正一點點
-GRID_ORIGIN_X = 96   
-GRID_ORIGIN_Y = 220  # 從 215 降到 220，讓數字更穩定地待在格子中央
-COL_SPACING = 68.5   
-ROW_SPACING = 162    
-TOTAL_COLS = 14      
+# --- 2. 專業範本座標參數 ---
+GRID_ORIGIN_X = 98    # 橫向起始偏移
+GRID_ORIGIN_Y = 222   # 垂直起始偏移 (讓字體往下坐)
+COL_SPACING = 68.4    # 每格寬度
+ROW_SPACING = 162.2   # 每行高度
+TOTAL_COLS = 14       # 每行 14 格
 
 # --- 3. 網頁配置 ---
 st.set_page_config(page_title="專業級對齊轉譜器", layout="centered")
-st.title("🎷 豎笛專業轉譜：終極校正版")
+st.title("🎷 豎笛專業轉譜：徹底解決黏字版")
 
 @st.cache_resource
 def load_ocr_reader():
@@ -35,7 +34,7 @@ reader = load_ocr_reader()
 
 TEMPLATE_FILE = "Bb36e564c1fa1f3c3db.jpg"
 
-uploaded_file = st.file_uploader("上傳手寫簡譜照片 (請盡量拍正、不要斜拍)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("上傳手寫簡譜照片", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     if not os.path.exists(TEMPLATE_FILE):
@@ -50,63 +49,57 @@ if uploaded_file is not None:
             temp_w, temp_h = pil_temp.size
             draw = ImageDraw.Draw(pil_temp)
             
-            if st.button("🚀 生成最終校正電子譜"):
-                with st.spinner('正在進行極精密對位...'):
+            if st.button("🚀 執行拆解並生成數位譜"):
+                with st.spinner('正在逐字拆解並精確填格...'):
                     img_cv = cv2.cvtColor(np.array(pil_input), cv2.COLOR_RGB2BGR)
                     results = reader.readtext(img_cv)
                     
                     try:
-                        # 使用更顯眼的粗體感
-                        font = ImageFont.load_default(size=64)
+                        font = ImageFont.load_default(size=65)
                     except:
                         font = ImageFont.load_default()
 
                     count = 0
-                    # 先將所有音符收集起來，進行初步排序防止跳格
-                    found_notes = []
-                    for (bbox, text, prob) in results:
+                    # 依據 Y 軸高度排序，避免亂序
+                    sorted_results = sorted(results, key=lambda x: (x[0][0][1] // 50, x[0][0][0]))
+
+                    for (bbox, text, prob) in sorted_results:
                         cleaned = "".join([c for c in text if c.isdigit()])
-                        if cleaned and prob > 0.15: # 稍微調低閾值，避免漏字
-                            rx = (bbox[0][0] + bbox[2][0]) / 2 / orig_w
+                        if cleaned and prob > 0.15:
+                            # 取得這組數字在手寫稿上的起始位置
+                            rx = bbox[0][0] / orig_w
                             ry = (bbox[0][1] + bbox[2][1]) / 2 / orig_h
-                            found_notes.append({'text': cleaned, 'rx': rx, 'ry': ry})
-                    
-                    # 依高度排序
-                    found_notes = sorted(found_notes, key=lambda x: x['ry'])
-
-                    for item in found_notes:
-                        raw_tx = item['rx'] * temp_w
-                        raw_ty = item['ry'] * temp_h
-                        
-                        # 格點吸附邏輯 (加入微調)
-                        col_idx = round((raw_tx - GRID_ORIGIN_X) / COL_SPACING)
-                        row_idx = round((raw_ty - GRID_ORIGIN_Y) / ROW_SPACING)
-                        
-                        col_idx = max(0, min(TOTAL_COLS - 1, col_idx))
-                        row_idx = max(0, min(9, row_idx))
-
-                        for i, char in enumerate(item['text']):
-                            current_col = col_idx + i
-                            if current_col >= TOTAL_COLS: break 
                             
-                            final_x = GRID_ORIGIN_X + (current_col * COL_SPACING)
-                            final_y = GRID_ORIGIN_Y + (row_idx * ROW_SPACING)
+                            # 換算成範本格子座標
+                            base_col = round((rx * temp_w - GRID_ORIGIN_X) / COL_SPACING)
+                            row_idx = round((ry * temp_h - GRID_ORIGIN_Y) / ROW_SPACING)
                             
-                            trans_note = transpose_for_clarinet(char)
-                            # 使用稍微更深的紅色，增加 stroke_width=1 讓它更扎實
-                            draw.text((final_x, final_y), trans_note, fill=(160, 0, 0), 
-                                      font=font, stroke_width=1, anchor="mm")
-                            count += 1
+                            row_idx = max(0, min(9, row_idx))
+
+                            # 【核心修正】逐字填入不同格子
+                            for i, char in enumerate(cleaned):
+                                current_col = base_col + i
+                                if current_col >= TOTAL_COLS: break 
+                                
+                                # 強制將每個數字鎖定在該格的中心
+                                final_x = GRID_ORIGIN_X + (current_col * COL_SPACING)
+                                final_y = GRID_ORIGIN_Y + (row_idx * ROW_SPACING)
+                                
+                                trans_note = transpose_for_clarinet(char)
+                                # 繪製紅字，確保每個字都是獨立位置
+                                draw.text((final_x, final_y), trans_note, fill=(180, 0, 0), 
+                                          font=font, stroke_width=1, anchor="mm")
+                                count += 1
                     
                     if count > 0:
-                        st.success(f"✅ 校正完畢！已排版 {count} 個音符。")
+                        st.success(f"✅ 成功！已將 {count} 個音符拆解並對齊。")
                         st.image(np.array(pil_temp), use_container_width=True)
                         
                         buf = io.BytesIO()
                         pil_temp.save(buf, format="PNG")
-                        st.download_button("📥 下載最終版電子譜", buf.getvalue(), "Final_Clarinet_Score.png", "image/png")
+                        st.download_button("📥 下載完美電子譜", buf.getvalue(), "Perfect_Clarinet_Score.png", "image/png")
                     else:
-                        st.warning("未能識別有效音符。")
+                        st.warning("未能辨識。")
                         
         except Exception as e:
             st.error(f"執行錯誤：{e}")
