@@ -6,20 +6,26 @@ import io
 import easyocr
 import os
 
-# --- 1. 移調與繪圖邏輯 ---
+# --- 1. 移調與座標參數 ---
 def transpose_for_clarinet(note_str):
     try:
         if note_str.isdigit():
             val = int(note_str)
-            # 豎笛 Bb 調：+2 移調循環
             return str((val + 2 - 1) % 7 + 1)
     except: pass
     return note_str
 
+# 專業範本 Bb36e564c1fa1f3c3db.jpg 的格點定義
+GRID_ORIGIN_X = 85   # 第一格中心 X
+GRID_ORIGIN_Y = 160  # 第一列中心 Y
+COL_SPACING = 68.5   # 每一格的寬度
+ROW_SPACING = 162    # 每一列的高度
+TOTAL_COLS = 14      # 每行 14 格
+
 # --- 2. 網頁配置 ---
-st.set_page_config(page_title="精準對位轉譜器", layout="centered")
-st.title("🎼 豎笛專業轉譜：1:1 精準對位版")
-st.markdown("此版本會根據手寫稿的**原始相對位置**，將音符精確填入數位範本中，解決跳格問題。")
+st.set_page_config(page_title="專業級對齊轉譜器", layout="centered")
+st.title("🎷 豎笛專業轉譜：格點自動吸附版")
+st.markdown("此版本會自動將辨識到的音符**吸附**到最接近的格位中心，確保排版完美整齊。")
 
 @st.cache_resource
 def load_ocr_reader():
@@ -29,69 +35,78 @@ reader = load_ocr_reader()
 
 TEMPLATE_FILE = "Bb36e564c1fa1f3c3db.jpg"
 
-uploaded_file = st.file_uploader("上傳手寫簡譜照片 (請拍正、拍清楚)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("上傳手寫簡譜照片", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     if not os.path.exists(TEMPLATE_FILE):
         st.error(f"找不到範本檔案 {TEMPLATE_FILE}")
     else:
         try:
-            # 1. 讀取手寫稿並獲取原始尺寸
             in_bytes = uploaded_file.read()
             pil_input = Image.open(io.BytesIO(in_bytes)).convert('RGB')
             orig_w, orig_h = pil_input.size
             
-            # 2. 準備數位範本底圖
             pil_temp = Image.open(TEMPLATE_FILE).convert('RGB')
             temp_w, temp_h = pil_temp.size
             draw = ImageDraw.Draw(pil_temp)
             
-            if st.button("🚀 生成 1:1 精準對位譜"):
-                with st.spinner('正在計算精確座標映射...'):
-                    # AI 辨識
+            if st.button("🚀 生成專業對齊電子譜"):
+                with st.spinner('正在精確對位與吸附中...'):
                     img_cv = cv2.cvtColor(np.array(pil_input), cv2.COLOR_RGB2BGR)
                     results = reader.readtext(img_cv)
                     
-                    # 字體設定 (使用大字體並加粗)
                     try:
-                        font = ImageFont.load_default(size=55)
+                        font = ImageFont.load_default(size=60)
                     except:
                         font = ImageFont.load_default()
 
                     count = 0
                     for (bbox, text, prob) in results:
-                        # 只處理數字
                         cleaned = "".join([c for c in text if c.isdigit()])
                         if cleaned and prob > 0.2:
-                            # 計算手寫稿中的中心點比例 (0.0 ~ 1.0)
-                            center_x_ratio = (bbox[0][0] + bbox[2][0]) / 2 / orig_w
-                            center_y_ratio = (bbox[0][1] + bbox[2][1]) / 2 / orig_h
+                            # 1. 計算在手寫稿上的比例位置
+                            rx = (bbox[0][0] + bbox[2][0]) / 2 / orig_w
+                            ry = (bbox[0][1] + bbox[2][1]) / 2 / orig_h
                             
-                            # 映射到範本上的絕對座標
-                            target_x_base = center_x_ratio * temp_w
-                            target_y = center_y_ratio * temp_h
+                            # 2. 映射到範本座標
+                            raw_tx = rx * temp_w
+                            raw_ty = ry * temp_h
                             
-                            # 若辨識到一串數字 (如 33)，拆開並微調間距避免重疊
+                            # 3. [核心] 格點吸附邏輯
+                            # 判斷這是在第幾行、第幾列
+                            col_idx = round((raw_tx - GRID_ORIGIN_X) / COL_SPACING)
+                            row_idx = round((raw_ty - GRID_ORIGIN_Y) / ROW_SPACING)
+                            
+                            # 限制範圍避免畫到邊界外
+                            col_idx = max(0, min(TOTAL_COLS - 1, col_idx))
+                            row_idx = max(0, min(9, row_idx))
+
+                            # 4. 逐字拆解並填入連續格子
                             for i, char in enumerate(cleaned):
-                                trans_note = transpose_for_clarinet(char)
-                                # 水平微調量，確保數字分開
-                                offset_x = (i - (len(cleaned)-1)/2) * 40 
-                                final_x = target_x_base + offset_x
+                                current_col = col_idx + i
+                                if current_col >= TOTAL_COLS: break # 避免爆行
                                 
-                                # 繪製：深紅色、中心對齊
-                                draw.text((final_x, target_y), trans_note, fill=(180, 0, 0), 
+                                # 強制鎖定中心座標
+                                final_x = GRID_ORIGIN_X + (current_col * COL_SPACING)
+                                final_y = GRID_ORIGIN_Y + (row_idx * ROW_SPACING)
+                                
+                                trans_note = transpose_for_clarinet(char)
+                                draw.text((final_x, final_y), trans_note, fill=(180, 0, 0), 
                                           font=font, stroke_width=1, anchor="mm")
                                 count += 1
                     
                     if count > 0:
-                        st.success(f"✅ 生成完畢！已對位填入 {count} 個音符。")
-                        st.image(np.array(pil_temp), caption="生成的精準對位譜 (檢查看看位置是否正確)", use_container_width=True)
+                        st.success(f"✅ 生成完畢！已將 {count} 個音符吸附至格位。")
+                        st.image(np.array(pil_temp), use_container_width=True)
                         
                         buf = io.BytesIO()
                         pil_temp.save(buf, format="PNG")
-                        st.download_button("📥 下載此專業譜", buf.getvalue(), "Clarinet_Accurate_Score.png", "image/png")
+                        st.download_button("📥 下載專業電子譜", buf.getvalue(), "Pro_Aligned_Score.png", "image/png")
                     else:
-                        st.warning("未能辨識音符，請嘗試更清晰的照片。")
+                        st.warning("辨識不到音符。")
+                        
+        except Exception as e:
+            st.error(f"執行錯誤：{e}")
                         
         except Exception as e:
             st.error(f"執行錯誤：{e}")
