@@ -33,7 +33,7 @@ def reconstruct_layout(ocr_results):
     blocks.sort(key=lambda b: b['center_y'])
     lines = []
     current_line = []
-    y_threshold = 15 
+    y_threshold = 20 # 稍微調大一點容差，適應放大後的圖片
     
     for block in blocks:
         if not current_line:
@@ -57,7 +57,7 @@ def reconstruct_layout(ocr_results):
     return final_text
 
 def format_jianpu_text(text):
-    """【新增】將文字強制格式化為標準簡譜樣式"""
+    """將文字強制格式化為標準簡譜樣式"""
     lines = text.split('\n')
     formatted_lines = []
     
@@ -65,25 +65,16 @@ def format_jianpu_text(text):
         if not line.strip():
             continue
             
-        # 1. 修正小節線的誤判：將單獨存在的字母 I 或 l 轉回小節線 |
         line = re.sub(r'(?<=\s)[Il](?=\s)', '|', line)
-        
-        # 2. 確保小節線 | 的前後都有空格，避免黏在一起
         line = line.replace('|', ' | ')
-        
-        # 3. 整理多餘空白：將連續 3 個以上的空白縮減為 2 個 (保留音符間的適度距離)
         line = re.sub(r'\s{3,}', '  ', line).strip()
         
-        # 4. 智慧補齊頭尾小節線：
-        # 如果這行超過 60% 都是數字或樂譜符號 (- , · , |)，就認定它是樂譜行
         chars = [c for c in line if c.strip()]
         if chars:
             music_char_count = sum(1 for c in chars if c.isdigit() or c in '-·|')
-            if music_char_count / len(chars) > 0.6: 
-                # 開頭沒有 | 就補上
+            if music_char_count / len(chars) > 0.4: # 稍微調低判定標準，讓更多行被視為樂譜
                 if not line.startswith('|'):
                     line = '| ' + line
-                # 結尾沒有 | 也補上
                 if not line.endswith('|'):
                     line = line + ' |'
                     
@@ -99,7 +90,7 @@ menu_option = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.info("💡 **升級提示**：目前已套用「樂譜格式自動美化」功能，會盡力輸出整齊的小節線格式！")
+st.sidebar.info("💡 **升級提示**：目前已開啟「影像強化模式」，AI 會自動放大並增強圖片對比，捕捉微小的音符數字！")
 
 if menu_option == "📝 文字輸入轉換":
     st.title("📝 簡譜文字轉換")
@@ -141,30 +132,38 @@ elif menu_option == "🖼️ 圖片 AI 智慧辨識 (EasyOCR)":
                         st.error(f"❌ 模型載入失敗：{str(e)}")
                         st.stop()
                 
-                with st.spinner('🔍 正在掃描影像與美化排版...'):
+                with st.spinner('🔍 正在進行影像強化與掃描...'):
                     try:
+                        # 【關鍵修改 1】：影像強化預處理
                         img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-                        result = ocr.readtext(img_cv)
                         
-                        # 1. 先用座標重構基本的左右位置
+                        # 1. 將圖片放大 2 倍 (讓微小的數字變大)
+                        width = int(img_cv.shape[1] * 2)
+                        height = int(img_cv.shape[0] * 2)
+                        dim = (width, height)
+                        resized_img = cv2.resize(img_cv, dim, interpolation=cv2.INTER_CUBIC)
+                        
+                        # 2. 轉成灰階圖片 (去除顏色的干擾)
+                        gray_img = cv2.cvtColor(resized_img, cv2.COLOR_BGR2GRAY)
+                        
+                        # 【關鍵修改 2】：強制提高 EasyOCR 的靈敏度
+                        # mag_ratio=2.5: 內部再次放大
+                        # contrast_ths=0.1, adjust_contrast=0.5: 強制處理低對比度的文字
+                        result = ocr.readtext(gray_img, mag_ratio=2.5, contrast_ths=0.1, adjust_contrast=0.5)
+                        
                         structured_text = reconstruct_layout(result)
-                        
-                        # 2. 加入【全新功能】：自動美化樂譜格式 (加上小節線與間距)
                         beautified_text = format_jianpu_text(structured_text)
-                        
-                        # 3. 丟給 utils.py 進行最終清理與移調
                         cleaned_original, final_converted = process_jianpu_ocr(beautified_text)
                         
                         if cleaned_original.strip():
                             st.success("✅ 辨識與轉換完成！")
                             st.write("**(1) 根據座標重構並格式化的乾淨原譜：**")
-                            # 使用 st.code 可以讓字體變成等寬字體 (Monospace)，小節線會對齊得更漂亮！
                             st.code(cleaned_original, language="text")
                             
                             st.write("**(2) 自動移調後的結果：**")
                             st.code(final_converted, language="text")
                         else:
-                            st.error("⚠️ 無法從圖片中解析出清晰的音符，請嘗試其他圖片。")
+                            st.error("⚠️ AI 仍然無法從圖片中解析出清晰的音符。建議您：\n1. 裁切圖片，只保留樂譜部分\n2. 確保圖片光線充足且不模糊")
                             
                     except Exception as e:
                         st.error(f"❌ 處理圖片時發生錯誤：{str(e)}")
