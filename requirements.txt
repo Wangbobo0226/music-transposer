@@ -1,6 +1,6 @@
 streamlit
 opencv-python-headless
 Pillow
-numpy
+numpy==1.23.5
 paddlepaddle
 paddleocr
